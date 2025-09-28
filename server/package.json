@@ -2,7 +2,9 @@
   "name": "therapy-ai-server",
   "type": "commonjs",
   "scripts": {
-    "start": "ts-node index.ts"
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node index.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.17.1",
@@ -14,6 +16,8 @@
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^2.7.0",
     "pdf-parse": "^1.1.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3",
     "ws": "^8.18.3"
   },
   "devDependencies": {
@@ -23,8 +27,6 @@
     "@types/node": "^20.11.0",
     "@types/node-fetch": "^2.6.11",
     "@types/pdf-parse": "^1.1.5",
-    "@types/ws": "^8.5.10",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
+    "@types/ws": "^8.5.10"
   }
 }
