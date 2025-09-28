@@ -5,6 +5,8 @@
     "start": "ts-node index.ts"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^17.2.2",
     "node-fetch": "^2.7.0",
     "ws": "^8.18.3"
   },

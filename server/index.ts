@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { therapyReply, type ChatTurn } from "./llm";
@@ -24,7 +25,7 @@ wss.on("connection", (ws: WebSocket) => {
   send(ws, { type: "ready" });
   send(ws, {
     type: "info",
-    message: `LLM: ${process.env.OLLAMA_MODEL || "llama3:8b-instruct"}`,
+    message: `LLM: Gemini Pro (Google AI)`,
   });
 
   // keep alive

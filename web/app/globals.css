@@ -270,3 +270,49 @@ html {
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
     0 10px 10px -5px rgba(0, 0, 0, 0.04);
 }
+
+/* Voice dropdown styling */
+select option {
+  background-color: white !important;
+  color: #1f2937 !important;
+  padding: 8px 12px;
+}
+
+select option:hover {
+  background-color: #f3f4f6 !important;
+  color: #1f2937 !important;
+}
+
+select option:checked {
+  background-color: #3b82f6 !important;
+  color: white !important;
+}
+
+/* Ensure select dropdown has proper contrast */
+select {
+  background-color: white !important;
+  color: #1f2937 !important;
+}
+
+select:focus {
+  background-color: white !important;
+  color: #1f2937 !important;
+}
+
+/* Message input field styling */
+input[type="text"] {
+  background-color: white !important;
+  color: #1f2937 !important;
+  border-color: #d1d5db !important;
+}
+
+input[type="text"]:focus {
+  background-color: white !important;
+  color: #1f2937 !important;
+  border-color: #3b82f6 !important;
+  outline: none !important;
+}
+
+input[type="text"]::placeholder {
+  color: #6b7280 !important;
+}

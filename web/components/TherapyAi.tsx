@@ -262,16 +262,101 @@ const TherapyAI: React.FC = () => {
   const [selectedSessionLength, setSelectedSessionLength] = useState(25);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [selectedVoice, setSelectedVoice] = useState<string | null>(null);
+  const [availableVoices, setAvailableVoices] = useState<
+    SpeechSynthesisVoice[]
+  >([]);
   const [currentTranscript, setCurrentTranscript] = useState("");
   const [rapportChange, setRapportChange] = useState<number | null>(null);
   const [showLearnMore, setShowLearnMore] = useState<boolean>(false);
   const [showSessionSummary, setShowSessionSummary] = useState<boolean>(false);
   const [sessionSummary, setSessionSummary] = useState<any>(null);
+  const [emotionalState, setEmotionalState] = useState("anxious");
+  const [engagementLevel, setEngagementLevel] = useState(2);
+  const [sessionPhase, setSessionPhase] = useState("opening");
 
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<any>(null);
+
+  // Load available voices
+  useEffect(() => {
+    const loadVoices = () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        console.log("Loading voices...");
+        const voices = speechSynthesis.getVoices();
+        console.log("Initial voices count:", voices.length);
+
+        if (voices.length > 0) {
+          setAvailableVoices(voices);
+          console.log(
+            "Voices loaded immediately:",
+            voices.map((v) => v.name)
+          );
+        } else {
+          console.log("No voices found, trying multiple approaches...");
+
+          // Try multiple approaches to load voices
+          const tryLoadVoices = () => {
+            const loadedVoices = speechSynthesis.getVoices();
+            if (loadedVoices.length > 0) {
+              setAvailableVoices(loadedVoices);
+              console.log(
+                "Voices loaded:",
+                loadedVoices.map((v) => v.name)
+              );
+              return true;
+            }
+            return false;
+          };
+
+          // Try immediately
+          if (tryLoadVoices()) return;
+
+          // Try after a short delay
+          setTimeout(() => {
+            if (tryLoadVoices()) return;
+
+            // Try triggering voice loading
+            const utterance = new SpeechSynthesisUtterance("");
+            utterance.volume = 0;
+            speechSynthesis.speak(utterance);
+            speechSynthesis.cancel();
+
+            // Try again after triggering
+            setTimeout(() => {
+              if (tryLoadVoices()) return;
+
+              // Last resort - wait for voiceschanged event
+              const handleVoicesChanged = () => {
+                const loadedVoices = speechSynthesis.getVoices();
+                console.log(
+                  "Voices changed event fired, count:",
+                  loadedVoices.length
+                );
+                setAvailableVoices(loadedVoices);
+                console.log(
+                  "Voices loaded after event:",
+                  loadedVoices.map((v) => v.name)
+                );
+              };
+
+              speechSynthesis.addEventListener(
+                "voiceschanged",
+                handleVoicesChanged,
+                { once: true }
+              );
+            }, 200);
+          }, 100);
+        }
+      }
+    };
+
+    // Add a small delay to ensure the page is fully loaded
+    const timer = setTimeout(loadVoices, 100);
+
+    return () => clearTimeout(timer);
+  }, []);
 
   // WebSocket connection
   useEffect(() => {
@@ -409,32 +494,36 @@ const TherapyAI: React.FC = () => {
       // Stop any current speech
       speechSynthesis.cancel();
 
-      // Get available voices
-      let voices = speechSynthesis.getVoices();
+      console.log("Speaking text:", text);
+      console.log("Text length:", text.length);
 
-      // If no voices loaded, wait for them
-      if (voices.length === 0) {
+      // Use available voices from state
+      if (availableVoices.length === 0) {
         console.log("Voices not loaded yet, waiting...");
-        speechSynthesis.addEventListener(
-          "voiceschanged",
-          () => {
-            voices = speechSynthesis.getVoices();
-            console.log(
-              "Voices loaded:",
-              voices.map((v) => v.name)
-            );
-            processVoiceSelection(voices, text);
-          },
-          { once: true }
-        );
+        // Trigger voice loading if not already done
+        const voices = speechSynthesis.getVoices();
+        if (voices.length > 0) {
+          setAvailableVoices(voices);
+          processVoiceSelection(voices, text);
+        } else {
+          speechSynthesis.addEventListener(
+            "voiceschanged",
+            () => {
+              const loadedVoices = speechSynthesis.getVoices();
+              setAvailableVoices(loadedVoices);
+              processVoiceSelection(loadedVoices, text);
+            },
+            { once: true }
+          );
+        }
         return;
       }
 
       console.log(
         "Available voices:",
-        voices.map((v) => v.name)
+        availableVoices.map((v) => v.name)
       );
-      processVoiceSelection(voices, text);
+      processVoiceSelection(availableVoices, text);
     }
   };
 
@@ -442,68 +531,72 @@ const TherapyAI: React.FC = () => {
     voices: SpeechSynthesisVoice[],
     text: string
   ) => {
-    // Always prioritize gender-appropriate voice selection based on persona
     let voiceToUse = null;
 
-    // Check if current persona is female and select appropriate voice
-    const isFemalePersona =
-      selectedPersona?.name === "Sarah Chen" ||
-      selectedPersona?.name === "Elena Rodriguez";
-
-    if (isFemalePersona) {
-      // Prefer female voices for female personas
-      voiceToUse =
-        voices.find(
-          (voice) =>
-            voice.name.toLowerCase().includes("samantha") ||
-            voice.name.toLowerCase().includes("victoria") ||
-            voice.name.toLowerCase().includes("susan") ||
-            voice.name.toLowerCase().includes("karen") ||
-            voice.name.toLowerCase().includes("linda") ||
-            voice.name.toLowerCase().includes("julie") ||
-            voice.name.toLowerCase().includes("amy") ||
-            voice.name.toLowerCase().includes("lisa") ||
-            voice.name.toLowerCase().includes("jennifer") ||
-            voice.name.toLowerCase().includes("michelle") ||
-            voice.name.toLowerCase().includes("female") ||
-            voice.name.toLowerCase().includes("woman") ||
-            voice.name.toLowerCase().includes("girl")
-        ) ||
-        voices.find(
-          (voice) =>
-            voice.name.includes("Google") &&
-            voice.name.toLowerCase().includes("female")
-        );
-    } else {
-      // Prefer male voices for male personas (Marcus)
-      voiceToUse =
-        voices.find(
-          (voice) =>
-            voice.name.toLowerCase().includes("alex") ||
-            voice.name.toLowerCase().includes("david") ||
-            voice.name.toLowerCase().includes("john") ||
-            voice.name.toLowerCase().includes("michael") ||
-            voice.name.toLowerCase().includes("robert") ||
-            voice.name.toLowerCase().includes("james") ||
-            voice.name.toLowerCase().includes("william") ||
-            voice.name.toLowerCase().includes("richard") ||
-            voice.name.toLowerCase().includes("male") ||
-            voice.name.toLowerCase().includes("man") ||
-            voice.name.toLowerCase().includes("boy")
-        ) ||
-        voices.find(
-          (voice) =>
-            voice.name.includes("Google") &&
-            voice.name.toLowerCase().includes("male")
-        );
-    }
-
-    // If no gender-specific voice found, try the manually selected voice
-    if (!voiceToUse && selectedVoice) {
+    // PRIORITY 1: Use manually selected voice if available
+    if (selectedVoice) {
       voiceToUse = voices.find((voice) => voice.name === selectedVoice);
+      console.log("Using manually selected voice:", selectedVoice);
     }
 
-    // Final fallback to general natural voices
+    // PRIORITY 2: If no manual selection, use gender-appropriate voice based on persona
+    if (!voiceToUse) {
+      const isFemalePersona =
+        selectedPersona?.name === "Sarah Chen" ||
+        selectedPersona?.name === "Elena Rodriguez";
+
+      if (isFemalePersona) {
+        // Prefer female voices for female personas
+        voiceToUse =
+          voices.find(
+            (voice) =>
+              voice.name.toLowerCase().includes("samantha") ||
+              voice.name.toLowerCase().includes("victoria") ||
+              voice.name.toLowerCase().includes("susan") ||
+              voice.name.toLowerCase().includes("karen") ||
+              voice.name.toLowerCase().includes("linda") ||
+              voice.name.toLowerCase().includes("julie") ||
+              voice.name.toLowerCase().includes("amy") ||
+              voice.name.toLowerCase().includes("lisa") ||
+              voice.name.toLowerCase().includes("jennifer") ||
+              voice.name.toLowerCase().includes("michelle") ||
+              voice.name.toLowerCase().includes("female") ||
+              voice.name.toLowerCase().includes("woman") ||
+              voice.name.toLowerCase().includes("girl")
+          ) ||
+          voices.find(
+            (voice) =>
+              voice.name.includes("Google") &&
+              voice.name.toLowerCase().includes("female")
+          );
+        console.log("Using gender-appropriate female voice for persona");
+      } else {
+        // Prefer male voices for male personas (Marcus)
+        voiceToUse =
+          voices.find(
+            (voice) =>
+              voice.name.toLowerCase().includes("alex") ||
+              voice.name.toLowerCase().includes("david") ||
+              voice.name.toLowerCase().includes("john") ||
+              voice.name.toLowerCase().includes("michael") ||
+              voice.name.toLowerCase().includes("robert") ||
+              voice.name.toLowerCase().includes("james") ||
+              voice.name.toLowerCase().includes("william") ||
+              voice.name.toLowerCase().includes("richard") ||
+              voice.name.toLowerCase().includes("male") ||
+              voice.name.toLowerCase().includes("man") ||
+              voice.name.toLowerCase().includes("boy")
+          ) ||
+          voices.find(
+            (voice) =>
+              voice.name.includes("Google") &&
+              voice.name.toLowerCase().includes("male")
+          );
+        console.log("Using gender-appropriate male voice for persona");
+      }
+    }
+
+    // PRIORITY 3: Final fallback to general natural voices
     if (!voiceToUse) {
       voiceToUse =
         voices.find(
@@ -516,35 +609,125 @@ const TherapyAI: React.FC = () => {
             voice.name.includes("Alex") ||
             voice.name.includes("Victoria")
         ) || voices[0];
+      console.log("Using fallback voice");
     }
 
     console.log("Selected persona:", selectedPersona?.name);
-    console.log("Is female persona:", isFemalePersona);
     console.log("Selected voice:", voiceToUse?.name);
 
     const utterance = new SpeechSynthesisUtterance(text);
 
-    // More human-like settings
-    utterance.rate = 0.85; // Slightly slower for more natural speech
-    utterance.pitch = 1.1; // Slightly higher pitch for warmth
-    utterance.volume = 0.9; // Higher volume for clarity
+    // Human-like speech settings - dynamic based on emotional state
+    let baseRate = 1.0;
+    let basePitch = 1.0;
+
+    // Adjust speech characteristics based on emotional state
+    if (emotionalState === "anxious") {
+      baseRate = 1.1; // Slightly faster when anxious
+      basePitch = 1.05; // Slightly higher pitch
+    } else if (emotionalState === "depressed") {
+      baseRate = 0.9; // Slower when depressed
+      basePitch = 0.95; // Slightly lower pitch
+    } else if (emotionalState === "angry") {
+      baseRate = 1.15; // Faster when angry
+      basePitch = 1.1; // Higher pitch
+    } else if (emotionalState === "calm") {
+      baseRate = 0.95; // Slightly slower when calm
+      basePitch = 0.98; // Slightly lower pitch
+    }
+
+    utterance.rate = baseRate; // Dynamic speaking rate
+    utterance.pitch = basePitch; // Dynamic pitch
+    utterance.volume = 0.8; // Good volume for clarity
     utterance.voice = voiceToUse;
 
-    // Add pauses for more natural speech
-    utterance.text = text
+    // Process text for more natural speech patterns - preserve full text
+    let processedText = text
       .replace(/\./g, ". ") // Add space after periods
       .replace(/,/g, ", ") // Add space after commas
       .replace(/\?/g, "? ") // Add space after questions
       .replace(/!/g, "! ") // Add space after exclamations
+      .replace(/:/g, ": ") // Add space after colons
+      .replace(/;/g, "; ") // Add space after semicolons
       .replace(/\*([^*]+)\*/g, " $1 ") // Handle *actions* like *sigh*
       .replace(/\s+/g, " ") // Clean up multiple spaces
       .trim();
 
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    console.log("Original text length:", text.length);
+    console.log("Processed text length:", processedText.length);
 
-    speechSynthesis.speak(utterance);
+    utterance.text = processedText;
+
+    utterance.onstart = () => {
+      console.log("Speech started");
+      setIsSpeaking(true);
+    };
+
+    utterance.onend = () => {
+      console.log("Speech ended");
+      setIsSpeaking(false);
+    };
+
+    utterance.onerror = (event) => {
+      console.error("Speech error:", event);
+      setIsSpeaking(false);
+    };
+
+    console.log("Final text to speak:", utterance.text);
+    console.log(
+      "Speech settings - Rate:",
+      utterance.rate,
+      "Pitch:",
+      utterance.pitch,
+      "Volume:",
+      utterance.volume
+    );
+
+    // If text is very long, split it into chunks to ensure full speech
+    if (processedText.length > 1000) {
+      console.log("Text is long, splitting into chunks");
+      const chunks = processedText.match(/.{1,1000}(?:\s|$)/g) || [
+        processedText,
+      ];
+      let currentChunk = 0;
+
+      const speakChunk = () => {
+        if (currentChunk < chunks.length) {
+          const chunkUtterance = new SpeechSynthesisUtterance(
+            chunks[currentChunk]
+          );
+          chunkUtterance.rate = utterance.rate;
+          chunkUtterance.pitch = utterance.pitch;
+          chunkUtterance.volume = utterance.volume;
+          chunkUtterance.voice = utterance.voice;
+
+          chunkUtterance.onend = () => {
+            currentChunk++;
+            if (currentChunk < chunks.length) {
+              setTimeout(speakChunk, 100); // Small delay between chunks
+            } else {
+              console.log("All chunks spoken");
+              setIsSpeaking(false);
+            }
+          };
+
+          chunkUtterance.onerror = () => {
+            console.error("Chunk speech error");
+            setIsSpeaking(false);
+          };
+
+          console.log(
+            `Speaking chunk ${currentChunk + 1}/${chunks.length}:`,
+            chunks[currentChunk]
+          );
+          speechSynthesis.speak(chunkUtterance);
+        }
+      };
+
+      speakChunk();
+    } else {
+      speechSynthesis.speak(utterance);
+    }
   };
 
   // Stop speech function
@@ -661,23 +844,11 @@ const TherapyAI: React.FC = () => {
 
   // Test AI voice
   const testAIVoice = () => {
-    // Ensure voices are loaded before testing
-    if (speechSynthesis.getVoices().length === 0) {
-      // Voices not loaded yet, wait for them
-      speechSynthesis.addEventListener(
-        "voiceschanged",
-        () => {
-          const testText =
-            "Hello there. I'm here to help you practice your therapeutic skills in a safe, supportive environment. Take your time, and remember, this is a space where you can learn and grow.";
-          speakText(testText);
-        },
-        { once: true }
-      );
-    } else {
-      const testText =
-        "Hello there. I'm here to help you practice your therapeutic skills in a safe, supportive environment. Take your time, and remember, this is a space where you can learn and grow.";
-      speakText(testText);
-    }
+    const testText =
+      "Hello there. I'm here to help you practice your therapeutic skills in a safe, supportive environment. Take your time, and remember, this is a space where you can learn and grow.";
+
+    console.log("Testing voice with selectedVoice:", selectedVoice);
+    speakText(testText);
   };
 
   // Send message
@@ -806,6 +977,56 @@ const TherapyAI: React.FC = () => {
 
     // Analyze user message for therapeutic techniques
     const message = userMessage.toLowerCase();
+
+    // Update emotional state based on conversation
+    if (
+      message.includes("anxious") ||
+      message.includes("worried") ||
+      message.includes("scared") ||
+      message.includes("nervous")
+    ) {
+      setEmotionalState("anxious");
+    } else if (
+      message.includes("sad") ||
+      message.includes("depressed") ||
+      message.includes("hopeless") ||
+      message.includes("down")
+    ) {
+      setEmotionalState("depressed");
+    } else if (
+      message.includes("angry") ||
+      message.includes("frustrated") ||
+      message.includes("mad") ||
+      message.includes("upset")
+    ) {
+      setEmotionalState("angry");
+    } else if (
+      message.includes("calm") ||
+      message.includes("better") ||
+      message.includes("relaxed") ||
+      message.includes("peaceful")
+    ) {
+      setEmotionalState("calm");
+    }
+
+    // Update session phase based on conversation length
+    const messageCount = sessionData.messages.length;
+    if (messageCount < 3) {
+      setSessionPhase("opening");
+    } else if (messageCount < 8) {
+      setSessionPhase("exploration");
+    } else if (messageCount < 15) {
+      setSessionPhase("working");
+    } else {
+      setSessionPhase("closing");
+    }
+
+    // Update engagement level based on message length
+    if (userMessage.length > 50) {
+      setEngagementLevel(Math.min(5, engagementLevel + 1));
+    } else if (userMessage.length < 10) {
+      setEngagementLevel(Math.max(1, engagementLevel - 1));
+    }
 
     // Check for empathy indicators
     if (
@@ -1469,7 +1690,7 @@ const TherapyAI: React.FC = () => {
                       The best therapy training
                       <br />
                       <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
-                        for AI.
+                        using AI.
                       </span>
                     </h1>
                     <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
@@ -2088,7 +2309,7 @@ const TherapyAI: React.FC = () => {
                   {personas.map((persona, index) => (
                     <div
                       key={persona.id}
-                      className="group bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl p-8 hover:border-purple-500/50 transition-all duration-300 cursor-pointer hover:transform hover:scale-105"
+                      className="group bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl p-8 hover:border-purple-500/50 transition-all duration-300 cursor-pointer hover:transform hover:scale-105 flex flex-col"
                       onClick={() => {
                         setSelectedPersona(persona);
                         setCurrentStep(3);
@@ -2106,17 +2327,17 @@ const TherapyAI: React.FC = () => {
                         </p>
                       </div>
 
-                      <div className="space-y-4 mb-6">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm font-medium text-gray-400">
+                      <div className="space-y-3 mb-6">
+                        <div className="flex items-center space-x-3">
+                          <span className="text-sm font-medium text-gray-400 min-w-[80px]">
                             Condition:
                           </span>
-                          <span className="text-sm font-semibold text-white">
+                          <span className="text-sm font-semibold text-white px-3 py-1 rounded-full bg-gray-700/50 border border-gray-600">
                             {persona.condition}
                           </span>
                         </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm font-medium text-gray-400">
+                        <div className="flex items-center space-x-3">
+                          <span className="text-sm font-medium text-gray-400 min-w-[80px]">
                             Difficulty:
                           </span>
                           <span
@@ -2133,11 +2354,11 @@ const TherapyAI: React.FC = () => {
                         </div>
                       </div>
 
-                      <p className="text-sm text-gray-300 mb-6 leading-relaxed">
+                      <p className="text-sm text-gray-300 mb-6 leading-relaxed flex-grow">
                         {persona.description}
                       </p>
 
-                      <button className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-lg font-semibold hover:from-purple-600 hover:to-pink-600 transition-all duration-300">
+                      <button className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-6 rounded-lg font-semibold hover:from-purple-600 hover:to-pink-600 transition-all duration-300 mt-auto">
                         SELECT {persona.name.split(" ")[0].toUpperCase()}
                       </button>
                     </div>
@@ -2380,29 +2601,73 @@ const TherapyAI: React.FC = () => {
                             </span>
                           </div>
                           <div className="space-y-2">
-                            <select
-                              value={selectedVoice || ""}
-                              onChange={(e) =>
-                                setSelectedVoice(e.target.value || null)
-                              }
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-therapy-500 focus:border-transparent"
-                            >
-                              <option value="">Auto-select best voice</option>
-                              {typeof window !== "undefined" &&
-                                speechSynthesis
-                                  .getVoices()
-                                  .map((voice, index) => (
-                                    <option key={index} value={voice.name}>
+                            <div className="flex gap-2">
+                              <select
+                                value={selectedVoice || ""}
+                                onChange={(e) =>
+                                  setSelectedVoice(e.target.value || null)
+                                }
+                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-therapy-500 focus:border-transparent bg-white text-gray-900"
+                              >
+                                <option
+                                  value=""
+                                  className="bg-white text-gray-900"
+                                >
+                                  Auto-select best voice
+                                </option>
+                                {availableVoices.length === 0 ? (
+                                  <option
+                                    value=""
+                                    disabled
+                                    className="bg-white text-gray-500"
+                                  >
+                                    Loading voices...
+                                  </option>
+                                ) : (
+                                  availableVoices.map((voice, index) => (
+                                    <option
+                                      key={index}
+                                      value={voice.name}
+                                      className="bg-white text-gray-900"
+                                    >
                                       {voice.name} ({voice.lang})
                                     </option>
-                                  ))}
-                            </select>
+                                  ))
+                                )}
+                              </select>
+                              <button
+                                onClick={() => {
+                                  console.log("Refreshing voices...");
+                                  const voices = speechSynthesis.getVoices();
+                                  setAvailableVoices(voices);
+                                  console.log(
+                                    "Refreshed voices:",
+                                    voices.map((v) => v.name)
+                                  );
+                                }}
+                                className="px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium"
+                                title="Refresh voices"
+                              >
+                                ↻
+                              </button>
+                            </div>
                             <button
                               onClick={testAIVoice}
                               className="text-therapy-600 hover:text-therapy-700 text-sm font-medium"
                             >
                               [Test AI Voice] ← Click to hear
                             </button>
+                            {selectedVoice && (
+                              <p className="text-xs text-gray-600">
+                                Current voice: {selectedVoice}
+                              </p>
+                            )}
+                            {availableVoices.length === 0 && (
+                              <p className="text-xs text-gray-500">
+                                No voices loaded. Try refreshing or check
+                                browser console.
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -2654,7 +2919,7 @@ const TherapyAI: React.FC = () => {
                               e.key === "Enter" && sendMessage(textInput)
                             }
                             placeholder="Type your message here or use voice..."
-                            className="w-full px-6 py-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-therapy-300 focus:border-therapy-500 transition-all duration-300 text-lg shadow-lg hover:shadow-xl"
+                            className="w-full px-6 py-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-therapy-300 focus:border-therapy-500 transition-all duration-300 text-lg shadow-lg hover:shadow-xl bg-white text-gray-900 placeholder-gray-500"
                           />
                         </div>
 
@@ -2707,114 +2972,199 @@ const TherapyAI: React.FC = () => {
                 </div>
 
                 {/* Real-time Feedback Panel */}
-                <div className="w-80 bg-gradient-to-b from-white to-gray-50 border-l border-gray-200 p-6 overflow-y-auto shadow-xl">
-                  <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
-                    <div className="w-8 h-8 bg-gradient-to-br from-therapy-500 to-therapy-700 rounded-full flex items-center justify-center mr-3">
-                      <span className="text-white text-sm font-bold">F</span>
+                <div className="w-80 bg-white border-l border-gray-200 p-6 overflow-y-auto shadow-xl">
+                  <div className="mb-6">
+                    <h3 className="text-lg font-bold text-gray-900 mb-2 flex items-center">
+                      <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mr-3">
+                        <span className="text-white text-xs font-bold">F</span>
+                      </div>
+                      Real-Time Feedback
+                    </h3>
+                    <div className="text-xs text-gray-500">
+                      Live coaching for your session
                     </div>
-                    REAL-TIME FEEDBACK
-                  </h3>
+                  </div>
 
                   {/* Patient Metrics */}
-                  <div className="mb-6">
-                    <h4 className="text-sm font-semibold text-gray-700 mb-3">
-                      PATIENT METRICS
+                  <div className="mb-6 bg-gray-50 rounded-lg p-4">
+                    <h4 className="text-sm font-semibold text-gray-800 mb-4 flex items-center">
+                      <Heart className="w-4 h-4 mr-2 text-red-500" />
+                      Patient Metrics
                     </h4>
-                    <div className="space-y-3">
-                      <div>
-                        <div className="flex justify-between text-sm mb-1">
-                          <span>Current Emotional State</span>
-                          <span className="text-blue-600">Anxious 😰</span>
+
+                    {/* Emotional State */}
+                    <div className="mb-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm text-gray-600">
+                          Emotional State
+                        </span>
+                        <div className="flex items-center">
+                          <span
+                            className={`text-sm font-medium ${
+                              emotionalState === "anxious"
+                                ? "text-orange-600"
+                                : emotionalState === "depressed"
+                                ? "text-blue-600"
+                                : emotionalState === "angry"
+                                ? "text-red-600"
+                                : emotionalState === "calm"
+                                ? "text-green-600"
+                                : "text-gray-600"
+                            }`}
+                          >
+                            {emotionalState === "anxious"
+                              ? "😰 Anxious"
+                              : emotionalState === "depressed"
+                              ? "😔 Depressed"
+                              : emotionalState === "angry"
+                              ? "😠 Angry"
+                              : emotionalState === "calm"
+                              ? "😌 Calm"
+                              : "😐 Neutral"}
+                          </span>
                         </div>
                       </div>
-                      <div>
-                        <div className="flex justify-between text-sm mb-2">
-                          <span className="font-semibold text-gray-700">
-                            Rapport Level
+                    </div>
+
+                    {/* Rapport Level */}
+                    <div className="mb-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm text-gray-600">
+                          Rapport Level
+                        </span>
+                        <div className="flex items-center">
+                          <span
+                            className={`text-sm font-bold ${
+                              rapportLevel >= 7
+                                ? "text-green-600"
+                                : rapportLevel >= 4
+                                ? "text-yellow-600"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {rapportLevel.toFixed(1)}/10
                           </span>
-                          <div className="flex items-center">
+                          {rapportChange !== null && (
                             <span
-                              className={`font-bold ${
-                                rapportLevel >= 7
-                                  ? "text-green-600"
-                                  : rapportLevel >= 4
-                                  ? "text-yellow-600"
-                                  : "text-red-600"
+                              className={`ml-2 text-xs font-bold animate-pulse ${
+                                rapportChange > 0
+                                  ? "text-green-500"
+                                  : "text-red-500"
                               }`}
                             >
-                              {rapportLevel.toFixed(1)}/10
+                              {rapportChange > 0 ? "+" : ""}
+                              {rapportChange.toFixed(1)}
                             </span>
-                            {rapportChange !== null && (
-                              <span
-                                className={`ml-2 text-xs font-bold animate-pulse ${
-                                  rapportChange > 0
-                                    ? "text-green-500"
-                                    : "text-red-500"
-                                }`}
-                              >
-                                {rapportChange > 0 ? "+" : ""}
-                                {rapportChange.toFixed(1)}
-                              </span>
-                            )}
-                          </div>
+                          )}
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-3 shadow-inner">
-                          <div
-                            className={`h-3 rounded-full transition-all duration-700 ease-out ${
-                              rapportLevel >= 7
-                                ? "bg-gradient-to-r from-green-400 to-green-600"
-                                : rapportLevel >= 4
-                                ? "bg-gradient-to-r from-yellow-400 to-yellow-600"
-                                : "bg-gradient-to-r from-red-400 to-red-600"
-                            }`}
-                            style={{ width: `${(rapportLevel / 10) * 100}%` }}
-                          ></div>
-                        </div>
-                        <div className="mt-1 text-xs text-gray-500 text-center">
-                          {rapportLevel >= 7
-                            ? "Excellent rapport!"
-                            : rapportLevel >= 4
-                            ? "Good progress"
-                            : "Keep building trust"}
-                        </div>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full transition-all duration-500 ${
+                            rapportLevel >= 7
+                              ? "bg-gradient-to-r from-green-400 to-green-500"
+                              : rapportLevel >= 4
+                              ? "bg-gradient-to-r from-yellow-400 to-yellow-500"
+                              : "bg-gradient-to-r from-red-400 to-red-500"
+                          }`}
+                          style={{ width: `${(rapportLevel / 10) * 100}%` }}
+                        ></div>
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        {rapportLevel >= 7
+                          ? "Strong therapeutic alliance"
+                          : rapportLevel >= 4
+                          ? "Building trust"
+                          : "Needs more connection"}
+                      </div>
+                    </div>
+
+                    {/* Engagement Level */}
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm text-gray-600">
+                          Engagement
+                        </span>
+                        <span className="text-sm font-medium text-gray-700">
+                          {engagementLevel}/5
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-gradient-to-r from-blue-400 to-blue-500 h-2 rounded-full transition-all duration-500"
+                          style={{ width: `${(engagementLevel / 5) * 100}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Session Phase */}
+                  <div className="mb-6">
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <div className="flex items-center mb-2">
+                        <Clock className="w-4 h-4 mr-2 text-blue-500" />
+                        <span className="text-sm font-semibold text-blue-800">
+                          Session Phase
+                        </span>
+                      </div>
+                      <div className="text-sm text-blue-700 capitalize">
+                        {sessionPhase === "opening"
+                          ? "Opening & Rapport Building"
+                          : sessionPhase === "exploration"
+                          ? "Exploration & Assessment"
+                          : sessionPhase === "working"
+                          ? "Working Through Issues"
+                          : "Closure & Planning"}
                       </div>
                     </div>
                   </div>
 
                   {/* Live Coaching Tips */}
                   <div>
-                    <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
-                      <Lightbulb className="w-4 h-4 mr-1 text-yellow-500" />
-                      LIVE COACHING TIPS
+                    <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                      <Lightbulb className="w-4 h-4 mr-2 text-yellow-500" />
+                      Live Coaching Tips
                     </h4>
                     <div className="space-y-3">
-                      {currentFeedback.map((feedback) => (
-                        <div
-                          key={feedback.id}
-                          className={`p-3 rounded-lg ${
-                            feedback.type === "positive"
-                              ? "bg-green-50 border-l-4 border-green-400"
-                              : feedback.type === "suggestion"
-                              ? "bg-yellow-50 border-l-4 border-yellow-400"
-                              : "bg-red-50 border-l-4 border-red-400"
-                          }`}
-                        >
-                          <div className="flex items-start">
-                            {feedback.icon === "CheckCircle" && (
-                              <CheckCircle className="w-4 h-4 text-green-500 mr-2 mt-0.5" />
-                            )}
-                            {feedback.icon === "MessageCircle" && (
-                              <MessageCircle className="w-4 h-4 text-purple-500 mr-2 mt-0.5" />
-                            )}
-                            {feedback.icon === "Clock" && (
-                              <Clock className="w-4 h-4 text-blue-500 mr-2 mt-0.5" />
-                            )}
-                            <span className="text-sm text-gray-700">
-                              {feedback.message}
-                            </span>
+                      {currentFeedback.length === 0 ? (
+                        <div className="bg-gray-50 rounded-lg p-4 text-center">
+                          <div className="text-gray-500 text-sm">
+                            Start the conversation to receive personalized
+                            coaching tips
                           </div>
                         </div>
-                      ))}
+                      ) : (
+                        currentFeedback.map((feedback) => (
+                          <div
+                            key={feedback.id}
+                            className={`rounded-lg p-3 ${
+                              feedback.type === "positive"
+                                ? "bg-green-50 border-l-4 border-green-400"
+                                : feedback.type === "suggestion"
+                                ? "bg-yellow-50 border-l-4 border-yellow-400"
+                                : "bg-red-50 border-l-4 border-red-400"
+                            }`}
+                          >
+                            <div className="flex items-start">
+                              {feedback.icon === "CheckCircle" && (
+                                <CheckCircle className="w-4 h-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
+                              )}
+                              {feedback.icon === "MessageCircle" && (
+                                <MessageCircle className="w-4 h-4 text-purple-500 mr-2 mt-0.5 flex-shrink-0" />
+                              )}
+                              {feedback.icon === "Clock" && (
+                                <Clock className="w-4 h-4 text-blue-500 mr-2 mt-0.5 flex-shrink-0" />
+                              )}
+                              {feedback.icon === "Lightbulb" && (
+                                <Lightbulb className="w-4 h-4 text-yellow-500 mr-2 mt-0.5 flex-shrink-0" />
+                              )}
+                              <span className="text-sm text-gray-700 leading-relaxed">
+                                {feedback.message}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
