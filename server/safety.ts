@@ -14,6 +14,7 @@ export function detectCrisis(text: string): boolean {
   return CRISIS_WORDS.some((w) => t.includes(w));
 }
 
+
 export function crisisResponse(): string {
   return `I’m really sorry you’re feeling this way. Your safety matters.
 If you’re in immediate danger, please contact local emergency services right now, or reach out to a trusted person nearby.

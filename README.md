@@ -6,6 +6,7 @@ You type. The model replies with warm, multi-paragraph support, asks gentle ques
 
 ---
 
+
 ## What’s inside
 
 - **Frontend (Next.js)** – simple chat UI with a “Connect / Send / Reset Memory” flow. Replies are spoken with `SpeechSynthesis`.
@@ -76,7 +77,7 @@ cd web
 npm run dev
 ```
 
-Open http://localhost:3000
+Open  http://localhost:3000
 
 Flow:
 1. Click **Connect**
