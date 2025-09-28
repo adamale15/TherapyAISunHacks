@@ -34,9 +34,30 @@ import {
   TrendingUp,
   MessageSquare,
   X,
+  Plus,
+  Upload,
+  BarChart3,
 } from "lucide-react";
+import { PersonaUploadModal } from "./PersonaUploadModal";
+import { PersonaManagement } from "./PersonaManagement";
+import { StudentDashboard } from "./StudentDashboard";
+import { PractitionerDashboard } from "./PractitionerDashboard";
 
 // Types
+interface StickyNote {
+  id: string;
+  content: string;
+  timestamp: number;
+  sessionTime: number; // Time in session when note was created
+  color: string;
+}
+
+interface SessionNote {
+  content: string;
+  sessionTime: string;
+  timestamp: string;
+}
+
 interface Persona {
   id: string;
   name: string;
@@ -238,7 +259,8 @@ const personas: Persona[] = [
 // Main component
 const TherapyAI: React.FC = () => {
   // State management
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1);
+  const [showDashboard, setShowDashboard] = useState(false);
   const [selectedPersona, setSelectedPersona] = useState<Persona | null>(null);
   const [sessionData, setSessionData] = useState<SessionData>({
     startTime: null,
@@ -274,10 +296,95 @@ const TherapyAI: React.FC = () => {
   const [engagementLevel, setEngagementLevel] = useState(2);
   const [sessionPhase, setSessionPhase] = useState("opening");
 
+  // Persona management state
+  const [allPersonas, setAllPersonas] = useState<Persona[]>([]);
+  const [showPersonaManagement, setShowPersonaManagement] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [userId] = useState<string>("default-user"); // In a real app, get from auth
+
+  // Sticky notes state
+  const [stickyNotes, setStickyNotes] = useState<StickyNote[]>([]);
+  const [newNote, setNewNote] = useState("");
+  const [showStickyNotes, setShowStickyNotes] = useState(false);
+
+  // Login state
+  const [showLogin, setShowLogin] = useState(false);
+  const [userType, setUserType] = useState<"student" | "practitioner" | null>(
+    null
+  );
+  const [showUserTypeDropdown, setShowUserTypeDropdown] = useState(false);
+  const [loginForm, setLoginForm] = useState({
+    email: "",
+    password: "",
+    rememberMe: false,
+  });
+  const [loginError, setLoginError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{
+    type: "student" | "practitioner";
+    email: string;
+    loginTime: number;
+    isNewUser?: boolean;
+  } | null>(null);
+
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<any>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Handle click outside dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setShowUserTypeDropdown(false);
+      }
+    };
+
+    if (showUserTypeDropdown) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showUserTypeDropdown]);
+
+  // Check for existing user session on mount
+  useEffect(() => {
+    const checkExistingSession = () => {
+      const userSession =
+        localStorage.getItem("therapyai_user") ||
+        sessionStorage.getItem("therapyai_user");
+      if (userSession) {
+        try {
+          const user = JSON.parse(userSession);
+          console.log("Existing user session found:", user);
+          setCurrentUser(user);
+          setIsSignedIn(true);
+          // In a real app, you might want to validate the session with the backend
+          // For now, we'll just log it and let the user continue
+        } catch (error) {
+          console.error("Error parsing user session:", error);
+          // Clear invalid session
+          localStorage.removeItem("therapyai_user");
+          sessionStorage.removeItem("therapyai_user");
+          setCurrentUser(null);
+          setIsSignedIn(false);
+        }
+      } else {
+        setCurrentUser(null);
+        setIsSignedIn(false);
+      }
+    };
+
+    checkExistingSession();
+  }, []);
 
   // Load available voices
   useEffect(() => {
@@ -358,12 +465,58 @@ const TherapyAI: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Load personas from API
+  useEffect(() => {
+    loadPersonas();
+  }, [userId]);
+
+  const loadPersonas = async () => {
+    try {
+      const response = await fetch(
+        `${
+          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"
+        }/api/personas/all/${userId}`
+      );
+      const result = await response.json();
+
+      if (result.success) {
+        setAllPersonas(result.personas);
+        // If no persona is selected, select the first one
+        if (!selectedPersona && result.personas.length > 0) {
+          setSelectedPersona(result.personas[0]);
+        }
+      } else {
+        console.error("Failed to load personas:", result.error);
+        // Fallback to hardcoded personas
+        setAllPersonas(personas);
+      }
+    } catch (error) {
+      console.error("Error loading personas:", error);
+      // Fallback to hardcoded personas
+      setAllPersonas(personas);
+    }
+  };
+
+  const handlePersonaUpload = (newPersona: any) => {
+    setAllPersonas((prev) => [...prev, newPersona]);
+    setShowUploadModal(false);
+    // Optionally select the new persona
+    setSelectedPersona(newPersona);
+  };
+
+  const handlePersonaSelect = (persona: any) => {
+    setSelectedPersona(persona);
+    setShowPersonaManagement(false);
+  };
+
   // WebSocket connection
   useEffect(() => {
     const connectWebSocket = () => {
       try {
         setConnectionStatus("connecting");
-        const ws = new WebSocket("ws://localhost:8080");
+        const ws = new WebSocket(
+          process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080"
+        );
 
         ws.onopen = () => {
           setWsConnected(true);
@@ -531,6 +684,13 @@ const TherapyAI: React.FC = () => {
     voices: SpeechSynthesisVoice[],
     text: string
   ) => {
+    // Check if speech synthesis is available
+    if (!("speechSynthesis" in window)) {
+      console.error("Speech synthesis not supported in this browser");
+      setIsSpeaking(false);
+      return;
+    }
+
     let voiceToUse = null;
 
     // PRIORITY 1: Use manually selected voice if available
@@ -669,7 +829,16 @@ const TherapyAI: React.FC = () => {
     };
 
     utterance.onerror = (event) => {
-      console.error("Speech error:", event);
+      console.error("Speech error:", {
+        type: event?.type || "unknown",
+        error: event?.error || "unknown error",
+        charIndex: event?.charIndex || 0,
+        charLength: event?.charLength || 0,
+        elapsedTime: event?.elapsedTime || 0,
+        name: event?.name || "SpeechSynthesisError",
+        utterance: utterance.text.substring(0, 100) + "...",
+        fullEvent: event,
+      });
       setIsSpeaking(false);
     };
 
@@ -711,8 +880,15 @@ const TherapyAI: React.FC = () => {
             }
           };
 
-          chunkUtterance.onerror = () => {
-            console.error("Chunk speech error");
+          chunkUtterance.onerror = (event) => {
+            console.error("Chunk speech error:", {
+              type: event?.type || "unknown",
+              error: event?.error || "unknown error",
+              chunk: currentChunk + 1,
+              totalChunks: chunks.length,
+              utterance: chunks[currentChunk]?.substring(0, 50) + "...",
+              fullEvent: event,
+            });
             setIsSpeaking(false);
           };
 
@@ -720,13 +896,23 @@ const TherapyAI: React.FC = () => {
             `Speaking chunk ${currentChunk + 1}/${chunks.length}:`,
             chunks[currentChunk]
           );
-          speechSynthesis.speak(chunkUtterance);
+          try {
+            speechSynthesis.speak(chunkUtterance);
+          } catch (error) {
+            console.error("Error speaking chunk:", error);
+            setIsSpeaking(false);
+          }
         }
       };
 
       speakChunk();
     } else {
-      speechSynthesis.speak(utterance);
+      try {
+        speechSynthesis.speak(utterance);
+      } catch (error) {
+        console.error("Error speaking utterance:", error);
+        setIsSpeaking(false);
+      }
     }
   };
 
@@ -1369,51 +1555,202 @@ const TherapyAI: React.FC = () => {
       (msg) => msg.sender === "persona"
     ).length;
     const sessionDurationMinutes = Math.floor(sessionDuration / 60); // Convert to minutes
+    const finalDuration = sessionDurationMinutes || 0;
 
-    // Calculate average rapport level
-    const avgRapport = rapportLevel;
+    // Calculate rapport level based on actual conversation
+    const calculateRapportFromConversation = () => {
+      if (totalMessages === 0) return 3.0; // Default starting point
 
-    // Count different types of feedback
-    const positiveFeedback = currentFeedback.filter(
-      (f) => f.type === "positive"
-    ).length;
-    const suggestions = currentFeedback.filter(
-      (f) => f.type === "suggestion"
-    ).length;
-    const warnings = currentFeedback.filter((f) => f.type === "warning").length;
+      let rapportScore = 3.0; // Start at neutral
 
-    // If no real session data, add some sample data for testing
-    const isTestMode = totalMessages === 0 || sessionDurationMinutes === 0;
+      // Analyze student messages for rapport-building techniques
+      const studentMessages = sessionData.messages.filter(
+        (msg) => msg.sender === "student"
+      );
 
-    const finalTotalMessages = isTestMode
-      ? Math.floor(Math.random() * 20) + 10
-      : totalMessages;
-    const finalStudentMessages = isTestMode
-      ? Math.floor(finalTotalMessages * 0.6)
-      : studentMessages;
-    const finalPersonaMessages = isTestMode
-      ? finalTotalMessages - finalStudentMessages
-      : personaMessages;
-    const finalDuration = isTestMode
-      ? Math.floor(Math.random() * 20) + 5
-      : sessionDurationMinutes;
-    const finalRapport = isTestMode ? Math.random() * 6 + 4 : avgRapport; // 4-10 range
-    const finalPositive = isTestMode
-      ? Math.floor(Math.random() * 5) + 2
-      : positiveFeedback;
-    const finalSuggestions = isTestMode
-      ? Math.floor(Math.random() * 8) + 3
-      : suggestions;
-    const finalWarnings = isTestMode ? Math.floor(Math.random() * 3) : warnings;
+      studentMessages.forEach((msg) => {
+        const text = msg.text.toLowerCase();
 
-    // Calculate engagement score based on message count and rapport
-    const engagementScore = Math.min(
-      10,
-      Math.round(
-        (finalStudentMessages / Math.max(1, finalDuration)) * 2 +
-          finalRapport / 2
-      )
-    );
+        // Positive rapport indicators
+        if (text.includes("i understand") || text.includes("i hear you"))
+          rapportScore += 0.5;
+        if (text.includes("that makes sense") || text.includes("i can see"))
+          rapportScore += 0.3;
+        if (text.includes("thank you") || text.includes("i appreciate"))
+          rapportScore += 0.2;
+        if (text.includes("how are you") || text.includes("how do you feel"))
+          rapportScore += 0.4;
+        if (text.includes("tell me more") || text.includes("can you explain"))
+          rapportScore += 0.3;
+        if (
+          text.includes("i'm sorry") ||
+          text.includes("that sounds difficult")
+        )
+          rapportScore += 0.4;
+
+        // Reflective listening indicators
+        if (text.includes("it sounds like") || text.includes("i'm hearing"))
+          rapportScore += 0.6;
+        if (
+          text.includes("what i'm understanding") ||
+          text.includes("so you're saying")
+        )
+          rapportScore += 0.5;
+
+        // Validation indicators
+        if (
+          text.includes("that's understandable") ||
+          text.includes("anyone would feel")
+        )
+          rapportScore += 0.4;
+        if (
+          text.includes("your feelings are valid") ||
+          text.includes("it's okay to feel")
+        )
+          rapportScore += 0.5;
+
+        // Open-ended questions
+        if (
+          text.includes("what") ||
+          text.includes("how") ||
+          text.includes("tell me")
+        )
+          rapportScore += 0.2;
+
+        // Negative indicators (reduce rapport)
+        if (text.includes("you should") || text.includes("you need to"))
+          rapportScore -= 0.3;
+        if (text.includes("that's wrong") || text.includes("you're wrong"))
+          rapportScore -= 0.5;
+        if (
+          text.includes("just") &&
+          (text.includes("stop") || text.includes("get over"))
+        )
+          rapportScore -= 0.4;
+      });
+
+      // Factor in message frequency (more engagement = higher rapport potential)
+      const messageFrequency = totalMessages / Math.max(1, finalDuration || 1);
+      if (messageFrequency > 2) rapportScore += 0.5; // High engagement
+      else if (messageFrequency > 1) rapportScore += 0.2; // Moderate engagement
+
+      // Cap between 1.0 and 10.0
+      return Math.max(1.0, Math.min(10.0, rapportScore));
+    };
+
+    const avgRapport = calculateRapportFromConversation();
+
+    // Count different types of feedback from actual conversation analysis
+    const analyzeConversationForFeedback = () => {
+      let positiveCount = 0;
+      let suggestionCount = 0;
+      let warningCount = 0;
+
+      const studentMessages = sessionData.messages.filter(
+        (msg) => msg.sender === "student"
+      );
+
+      studentMessages.forEach((msg) => {
+        const text = msg.text.toLowerCase();
+
+        // Count positive techniques
+        if (text.includes("it sounds like") || text.includes("i'm hearing"))
+          positiveCount++;
+        if (
+          text.includes("that makes sense") ||
+          text.includes("i can understand")
+        )
+          positiveCount++;
+        if (text.includes("how are you") || text.includes("how do you feel"))
+          positiveCount++;
+        if (text.includes("tell me more") || text.includes("can you explain"))
+          positiveCount++;
+        if (text.includes("i understand") || text.includes("i hear you"))
+          positiveCount++;
+
+        // Count suggestions needed
+        if (text.includes("you should") || text.includes("you need to"))
+          suggestionCount++;
+        if (text.includes("try this") || text.includes("do this"))
+          suggestionCount++;
+        if (text.includes("i think you should")) suggestionCount++;
+        if (
+          text.includes("just") &&
+          (text.includes("stop") || text.includes("get over"))
+        )
+          suggestionCount++;
+
+        // Count warnings
+        if (text.includes("that's wrong") || text.includes("you're wrong"))
+          warningCount++;
+        if (text.includes("you're being") && text.includes("dramatic"))
+          warningCount++;
+        if (text.includes("it's not that bad") || text.includes("get over it"))
+          warningCount++;
+      });
+
+      return { positiveCount, suggestionCount, warningCount };
+    };
+
+    const conversationAnalysis = analyzeConversationForFeedback();
+
+    // Use actual feedback counts from conversation analysis
+    const positiveFeedback = conversationAnalysis.positiveCount;
+    const suggestions = conversationAnalysis.suggestionCount;
+    const warnings = conversationAnalysis.warningCount;
+
+    // Use actual session data, with minimal fallbacks only when absolutely necessary
+    const finalTotalMessages = totalMessages || 0;
+    const finalStudentMessages = studentMessages || 0;
+    const finalPersonaMessages = personaMessages || 0;
+    const finalRapport = avgRapport || 3.0; // Default to 3.0 if no data
+    const finalPositive = positiveFeedback || 0;
+    const finalSuggestions = suggestions || 0;
+    const finalWarnings = warnings || 0;
+
+    // Calculate engagement score based on actual conversation metrics
+    const calculateEngagementScore = () => {
+      if (totalMessages === 0) return 0;
+
+      let engagementScore = 0;
+
+      // Base score from message frequency (0-4 points)
+      const messageFrequency =
+        finalStudentMessages / Math.max(1, finalDuration || 1);
+      if (messageFrequency >= 2) engagementScore += 4; // Very high engagement
+      else if (messageFrequency >= 1.5) engagementScore += 3; // High engagement
+      else if (messageFrequency >= 1)
+        engagementScore += 2; // Moderate engagement
+      else if (messageFrequency >= 0.5) engagementScore += 1; // Low engagement
+
+      // Rapport factor (0-3 points)
+      if (avgRapport >= 8) engagementScore += 3;
+      else if (avgRapport >= 6) engagementScore += 2;
+      else if (avgRapport >= 4) engagementScore += 1;
+
+      // Conversation depth factor (0-2 points)
+      const avgMessageLength =
+        finalStudentMessages > 0
+          ? sessionData.messages
+              .filter((msg) => msg.sender === "student")
+              .reduce((sum, msg) => sum + msg.text.length, 0) /
+            finalStudentMessages
+          : 0;
+
+      if (avgMessageLength >= 100) engagementScore += 2; // Detailed responses
+      else if (avgMessageLength >= 50) engagementScore += 1; // Moderate responses
+
+      // Question asking factor (0-1 point)
+      const questionCount = sessionData.messages
+        .filter((msg) => msg.sender === "student")
+        .filter((msg) => msg.text.includes("?")).length;
+
+      if (questionCount >= 3) engagementScore += 1; // Good question asking
+
+      return Math.min(10, Math.max(0, engagementScore));
+    };
+
+    const engagementScore = calculateEngagementScore();
 
     return {
       persona: selectedPersona?.name || "Sarah Chen",
@@ -1429,6 +1766,11 @@ const TherapyAI: React.FC = () => {
         errors: finalWarnings,
         total: finalPositive + finalSuggestions + finalWarnings,
       },
+      stickyNotes: stickyNotes.map((note) => ({
+        content: note.content,
+        sessionTime: formatSessionTime(note.sessionTime),
+        timestamp: new Date(note.timestamp).toLocaleTimeString(),
+      })),
       timestamp: new Date().toLocaleString(),
     };
   };
@@ -1473,6 +1815,14 @@ const TherapyAI: React.FC = () => {
           .feedback-item { padding: 15px; }
           .feedback-count { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
           .feedback-label { font-size: 14px; color: #6c757d; }
+          .sticky-notes { margin-top: 30px; }
+          .sticky-notes h2 { color: #495057; margin-bottom: 20px; }
+          .notes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; }
+          .note-item { background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #6f42c1; }
+          .note-content { font-size: 14px; color: #495057; margin-bottom: 8px; line-height: 1.4; }
+          .note-meta { display: flex; justify-content: space-between; font-size: 12px; color: #6c757d; }
+          .note-time { font-weight: bold; }
+          .note-timestamp { font-style: italic; }
         </style>
       </head>
       <body>
@@ -1604,6 +1954,31 @@ const TherapyAI: React.FC = () => {
             )
             .join("")}
         </div>
+
+        ${
+          sessionSummary.stickyNotes && sessionSummary.stickyNotes.length > 0
+            ? `
+        <div class="sticky-notes">
+          <h2>Session Notes</h2>
+          <div class="notes-grid">
+            ${sessionSummary.stickyNotes
+              .map(
+                (note: SessionNote) => `
+              <div class="note-item">
+                <div class="note-content">${note.content}</div>
+                <div class="note-meta">
+                  <span class="note-time">Session Time: ${note.sessionTime}</span>
+                  <span class="note-timestamp">${note.timestamp}</span>
+                </div>
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+        </div>
+        `
+            : ""
+        }
       </body>
       </html>
     `;
@@ -1648,6 +2023,245 @@ const TherapyAI: React.FC = () => {
     setTextInput("");
     setCurrentStep(1);
     setSelectedPersona(null);
+    setStickyNotes([]); // Clear sticky notes on reset
+  };
+
+  // Sticky notes functions
+  const addStickyNote = () => {
+    if (newNote.trim()) {
+      const note: StickyNote = {
+        id: Date.now().toString(),
+        content: newNote.trim(),
+        timestamp: Date.now(),
+        sessionTime: sessionDuration,
+        color: getRandomColor(),
+      };
+      setStickyNotes((prev) => [...prev, note]);
+      setNewNote("");
+    }
+  };
+
+  const deleteStickyNote = (id: string) => {
+    setStickyNotes((prev) => prev.filter((note) => note.id !== id));
+  };
+
+  const getRandomColor = () => {
+    const colors = [
+      "bg-yellow-200 border-yellow-300",
+      "bg-pink-200 border-pink-300",
+      "bg-blue-200 border-blue-300",
+      "bg-green-200 border-green-300",
+      "bg-purple-200 border-purple-300",
+      "bg-orange-200 border-orange-300",
+    ];
+    return colors[Math.floor(Math.random() * colors.length)];
+  };
+
+  const formatSessionTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  // Login functions
+  const handleLoginFormChange = (field: string, value: string | boolean) => {
+    setLoginForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+    setLoginError(""); // Clear error when user types
+  };
+
+  const validateLoginForm = () => {
+    if (!loginForm.email.trim()) {
+      setLoginError("Email is required");
+      return false;
+    }
+    if (!loginForm.password.trim()) {
+      setLoginError("Password is required");
+      return false;
+    }
+    if (!loginForm.email.includes("@")) {
+      setLoginError("Please enter a valid email address");
+      return false;
+    }
+    if (loginForm.password.length < 6) {
+      setLoginError("Password must be at least 6 characters");
+      return false;
+    }
+    return true;
+  };
+
+  const handleLogin = async () => {
+    if (!validateLoginForm()) return;
+
+    setIsLoggingIn(true);
+    setLoginError("");
+
+    try {
+      // Call the GCS authentication API
+      const response = await fetch(
+        `${
+          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"
+        }/api/auth/login`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: loginForm.email,
+            password: loginForm.password,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!data.success) {
+        setLoginError(data.message || "Login failed. Please try again.");
+        return;
+      }
+
+      // Store user session locally for frontend state management
+      const userData = {
+        type: data.user.userType,
+        email: data.user.email,
+        loginTime: data.user.lastLogin,
+        userId: data.user.id,
+      };
+
+      if (loginForm.rememberMe) {
+        localStorage.setItem("therapyai_user", JSON.stringify(userData));
+      } else {
+        sessionStorage.setItem("therapyai_user", JSON.stringify(userData));
+      }
+
+      // Update signed-in state
+      setCurrentUser(userData);
+      setIsSignedIn(true);
+
+      // Close login modal and proceed to persona selection
+      setShowLogin(false);
+      setUserType(null);
+      setLoginForm({ email: "", password: "", rememberMe: false });
+      setCurrentStep(2);
+
+      console.log(
+        `User logged in successfully: ${data.user.email} (${data.user.userType})`
+      );
+    } catch (error) {
+      console.error("Login error:", error);
+      setLoginError(
+        "Login failed. Please check your connection and try again."
+      );
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleCreateAccount = async () => {
+    if (!validateLoginForm()) return;
+
+    setIsCreatingAccount(true);
+    setLoginError("");
+
+    try {
+      // Call the GCS registration API
+      const response = await fetch(
+        `${
+          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001"
+        }/api/auth/register`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: loginForm.email,
+            password: loginForm.password,
+            userType: userType,
+            rememberMe: loginForm.rememberMe,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!data.success) {
+        setLoginError(
+          data.message || "Account creation failed. Please try again."
+        );
+        return;
+      }
+
+      // Store user session locally for frontend state management
+      const userData = {
+        type: data.user.userType,
+        email: data.user.email,
+        loginTime: data.user.lastLogin,
+        userId: data.user.id,
+      };
+
+      if (loginForm.rememberMe) {
+        localStorage.setItem("therapyai_user", JSON.stringify(userData));
+      } else {
+        sessionStorage.setItem("therapyai_user", JSON.stringify(userData));
+      }
+
+      // Update signed-in state
+      setCurrentUser(userData);
+      setIsSignedIn(true);
+
+      // Close login modal and proceed to persona selection
+      setShowLogin(false);
+      setUserType(null);
+      setLoginForm({ email: "", password: "", rememberMe: false });
+      setCurrentStep(2);
+
+      console.log(
+        `Account created successfully: ${data.user.email} (${data.user.userType})`
+      );
+    } catch (error) {
+      console.error("Account creation error:", error);
+      setLoginError(
+        "Account creation failed. Please check your connection and try again."
+      );
+    } finally {
+      setIsCreatingAccount(false);
+    }
+  };
+
+  const resetLoginForm = () => {
+    setLoginForm({ email: "", password: "", rememberMe: false });
+    setLoginError("");
+    setIsLoggingIn(false);
+    setIsCreatingAccount(false);
+  };
+
+  const handleSignOut = () => {
+    // Clear user session
+    localStorage.removeItem("therapyai_user");
+    sessionStorage.removeItem("therapyai_user");
+
+    // Reset user state
+    setCurrentUser(null);
+    setIsSignedIn(false);
+
+    // Reset app state
+    setCurrentStep(1);
+    setSelectedPersona(null);
+    setSessionData({
+      startTime: null,
+      duration: 0,
+      messages: [],
+      scores: { empathy: 0, technique: 0, management: 0, crisis: 0 },
+      conversationStage: 1,
+      emotionalState: "neutral",
+    });
+    setStickyNotes([]);
+
+    console.log("User signed out successfully");
   };
 
   // Render based on current step
@@ -1670,15 +2284,150 @@ const TherapyAI: React.FC = () => {
               {/* Header */}
               <header className="px-6 py-6">
                 <div className="max-w-7xl mx-auto flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
+                  <button
+                    onClick={() => setCurrentStep(1)}
+                    className="flex items-center space-x-3 hover:opacity-80 transition-opacity"
+                  >
                     <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
                       <Brain className="w-6 h-6 text-white" />
                     </div>
                     <span className="text-xl font-bold">TherapyAI</span>
-                  </div>
-                  <button className="px-4 py-2 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg text-sm font-medium hover:bg-white/20 transition-colors">
-                    Sign In
                   </button>
+                  {isSignedIn ? (
+                    // Signed in - show user info and sign out
+                    <div className="flex items-center space-x-3">
+                      <div
+                        className={`flex items-center space-x-2 ${
+                          currentUser?.type === "student"
+                            ? "cursor-pointer hover:bg-gray-800/50 p-2 rounded-lg transition-colors"
+                            : currentUser?.type === "practitioner"
+                            ? "cursor-pointer hover:bg-gray-800/50 p-2 rounded-lg transition-colors"
+                            : ""
+                        }`}
+                        onClick={() => {
+                          if (currentUser?.type === "student") {
+                            setCurrentStep(6);
+                          } else if (currentUser?.type === "practitioner") {
+                            setCurrentStep(7);
+                          }
+                        }}
+                      >
+                        <div
+                          className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                            currentUser?.type === "student"
+                              ? "bg-purple-500/20 border border-purple-500/30"
+                              : "bg-blue-500/20 border border-blue-500/30"
+                          }`}
+                        >
+                          <User className="w-4 h-4 text-white" />
+                        </div>
+                        <div className="text-sm">
+                          <div className="text-white font-medium">
+                            {currentUser?.email}
+                          </div>
+                          <div
+                            className={`text-xs ${
+                              currentUser?.type === "student"
+                                ? "text-purple-300"
+                                : "text-blue-300"
+                            }`}
+                          >
+                            {currentUser?.type === "student"
+                              ? "Student"
+                              : "Practitioner"}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleSignOut}
+                        className="px-4 py-2 bg-red-500/20 backdrop-blur-sm border border-red-500/30 rounded-lg text-sm font-medium text-red-300 hover:bg-red-500/30 hover:text-red-200 transition-colors flex items-center"
+                      >
+                        <svg
+                          className="w-4 h-4 mr-2"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                          />
+                        </svg>
+                        Sign Out
+                      </button>
+                    </div>
+                  ) : (
+                    // Not signed in - show sign in dropdown
+                    <div className="relative" ref={dropdownRef}>
+                      <button
+                        onClick={() =>
+                          setShowUserTypeDropdown(!showUserTypeDropdown)
+                        }
+                        className="px-4 py-2 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg text-sm font-medium hover:bg-white/20 transition-colors flex items-center"
+                      >
+                        Sign In
+                        <svg
+                          className="w-4 h-4 ml-2"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 9l-7 7-7-7"
+                          />
+                        </svg>
+                      </button>
+
+                      {/* Dropdown Menu */}
+                      {showUserTypeDropdown && (
+                        <div className="absolute right-0 mt-2 w-48 bg-gray-900 border border-gray-700 rounded-lg shadow-lg z-50">
+                          <div className="py-2">
+                            <button
+                              onClick={() => {
+                                setUserType("student");
+                                setShowUserTypeDropdown(false);
+                                setShowLogin(true);
+                              }}
+                              className="w-full px-4 py-3 text-left text-sm text-white hover:bg-purple-500/20 hover:text-purple-300 transition-colors flex items-center"
+                            >
+                              <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center mr-3">
+                                <GraduationCap className="w-4 h-4 text-white" />
+                              </div>
+                              <div>
+                                <div className="font-medium">Student</div>
+                                <div className="text-xs text-gray-400">
+                                  Practice therapy skills
+                                </div>
+                              </div>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setUserType("practitioner");
+                                setShowUserTypeDropdown(false);
+                                setShowLogin(true);
+                              }}
+                              className="w-full px-4 py-3 text-left text-sm text-white hover:bg-blue-500/20 hover:text-blue-300 transition-colors flex items-center"
+                            >
+                              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg flex items-center justify-center mr-3">
+                                <Shield className="w-4 h-4 text-white" />
+                              </div>
+                              <div>
+                                <div className="font-medium">Practitioner</div>
+                                <div className="text-xs text-gray-400">
+                                  Professional training
+                                </div>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </header>
 
@@ -1686,34 +2435,34 @@ const TherapyAI: React.FC = () => {
               <main className="flex-1 flex items-center justify-center px-6">
                 <div className="max-w-4xl w-full text-center">
                   <div className="mb-8">
-                    <h1 className="text-6xl md:text-7xl font-bold mb-6 bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
+                    <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold mb-6 bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
                       The best therapy training
                       <br />
                       <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
                         using AI.
                       </span>
                     </h1>
-                    <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
+                    <p className="text-lg sm:text-xl text-gray-300 mb-8 max-w-3xl mx-auto leading-relaxed px-4">
                       Practice therapeutic skills in a safe environment. Memory
                       - that's dynamic, works like the human brain, and scales
-                      without breaking bank.
+                      without breaking the bank.
                     </p>
                   </div>
 
                   {/* Stats */}
-                  <div className="flex items-center justify-center space-x-8 mb-12">
+                  <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-8 mb-12">
                     <div className="text-center">
                       <div className="text-2xl font-bold text-white">500+</div>
                       <div className="text-sm text-gray-400">
                         Students Training
                       </div>
                     </div>
-                    <div className="w-px h-8 bg-gray-600"></div>
+                    <div className="hidden sm:block w-px h-8 bg-gray-600"></div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-white">98%</div>
                       <div className="text-sm text-gray-400">Success Rate</div>
                     </div>
-                    <div className="w-px h-8 bg-gray-600"></div>
+                    <div className="hidden sm:block w-px h-8 bg-gray-600"></div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-white">24/7</div>
                       <div className="text-sm text-gray-400">Available</div>
@@ -1721,16 +2470,36 @@ const TherapyAI: React.FC = () => {
                   </div>
 
                   {/* CTA Buttons */}
-                  <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4">
-                    <button
-                      onClick={() => setCurrentStep(2)}
-                      className="group relative px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-semibold text-white hover:from-purple-600 hover:to-pink-600 transition-all duration-300 transform hover:scale-105"
-                    >
-                      <span className="relative z-10 flex items-center">
-                        Start Training Session
-                        <ArrowRight className="w-5 h-5 ml-2" />
-                      </span>
-                    </button>
+                  <div className="flex flex-col items-center justify-center space-y-6">
+                    {/* Main Action Buttons */}
+                    <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4">
+                      <button
+                        onClick={() => {
+                          setUserType("student");
+                          setShowLogin(true);
+                        }}
+                        className="group relative px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg font-semibold text-white hover:from-purple-600 hover:to-pink-600 transition-all duration-300 transform hover:scale-105"
+                      >
+                        <span className="relative z-10 flex items-center">
+                          Student
+                          <ArrowRight className="w-5 h-5 ml-2" />
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setUserType("practitioner");
+                          setShowLogin(true);
+                        }}
+                        className="group relative px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg font-semibold text-white hover:from-blue-600 hover:to-cyan-600 transition-all duration-300 transform hover:scale-105"
+                      >
+                        <span className="relative z-10 flex items-center">
+                          Practitioner
+                          <ArrowRight className="w-5 h-5 ml-2" />
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Learn More Button */}
                     <button
                       onClick={() => setShowLearnMore(true)}
                       className="px-8 py-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg font-semibold text-white hover:bg-white/20 transition-all duration-300"
@@ -2276,19 +3045,82 @@ const TherapyAI: React.FC = () => {
             {/* Header */}
             <header className="px-6 py-6 border-b border-gray-800">
               <div className="max-w-7xl mx-auto flex items-center justify-between">
-                <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setCurrentStep(1)}
+                  className="flex items-center space-x-3 hover:opacity-80 transition-opacity"
+                >
                   <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
                     <Brain className="w-6 h-6 text-white" />
                   </div>
                   <span className="text-xl font-bold">TherapyAI</span>
-                </div>
-                <button
-                  onClick={() => setCurrentStep(1)}
-                  className="flex items-center text-gray-300 hover:text-white transition-colors"
-                >
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back
                 </button>
+                <div className="flex items-center space-x-4">
+                  {isSignedIn && (
+                    <div
+                      className={`flex items-center space-x-2 ${
+                        currentUser?.type === "student"
+                          ? "cursor-pointer hover:bg-gray-800/50 p-2 rounded-lg transition-colors"
+                          : currentUser?.type === "practitioner"
+                          ? "cursor-pointer hover:bg-gray-800/50 p-2 rounded-lg transition-colors"
+                          : ""
+                      }`}
+                      onClick={() => {
+                        if (currentUser?.type === "student") {
+                          setCurrentStep(6);
+                        } else if (currentUser?.type === "practitioner") {
+                          setCurrentStep(7);
+                        }
+                      }}
+                    >
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                          currentUser?.type === "student"
+                            ? "bg-purple-500/20 border border-purple-500/30"
+                            : "bg-blue-500/20 border border-blue-500/30"
+                        }`}
+                      >
+                        <User className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="text-sm">
+                        <div className="text-white font-medium">
+                          {currentUser?.email}
+                        </div>
+                        <div
+                          className={`text-xs ${
+                            currentUser?.type === "student"
+                              ? "text-purple-300"
+                              : "text-blue-300"
+                          }`}
+                        >
+                          {currentUser?.type === "student"
+                            ? "Student"
+                            : "Practitioner"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {isSignedIn && (
+                    <button
+                      onClick={handleSignOut}
+                      className="px-4 py-2 bg-red-500/20 backdrop-blur-sm border border-red-500/30 rounded-lg text-sm font-medium text-red-300 hover:bg-red-500/30 hover:text-red-200 transition-colors flex items-center"
+                    >
+                      <svg
+                        className="w-4 h-4 mr-2"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                        />
+                      </svg>
+                      Sign Out
+                    </button>
+                  )}
+                </div>
               </div>
             </header>
 
@@ -2298,15 +3130,50 @@ const TherapyAI: React.FC = () => {
                   <h1 className="text-5xl font-bold mb-6 bg-gradient-to-r from-white via-gray-100 to-gray-300 bg-clip-text text-transparent">
                     Choose Your Training Case
                   </h1>
-                  <p className="text-xl text-gray-300 max-w-2xl mx-auto">
+                  <p className="text-xl text-gray-300 max-w-2xl mx-auto mb-8">
                     Select a persona to practice with different difficulty
                     levels. Each case offers unique challenges to enhance your
                     therapeutic skills.
                   </p>
+
+                  <div className="flex justify-center space-x-4">
+                    {isSignedIn && currentUser?.type === "student" && (
+                      <button
+                        onClick={() => setCurrentStep(6)}
+                        className="flex items-center space-x-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white px-6 py-3 rounded-lg hover:from-green-600 hover:to-emerald-600 transition-all duration-300"
+                      >
+                        <BarChart3 className="w-5 h-5" />
+                        <span>Dashboard</span>
+                      </button>
+                    )}
+                    {isSignedIn && currentUser?.type === "practitioner" && (
+                      <button
+                        onClick={() => setCurrentStep(7)}
+                        className="flex items-center space-x-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-3 rounded-lg hover:from-blue-600 hover:to-cyan-600 transition-all duration-300"
+                      >
+                        <BarChart3 className="w-5 h-5" />
+                        <span>Dashboard</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowPersonaManagement(true)}
+                      className="flex items-center space-x-2 bg-gray-800 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition-colors"
+                    >
+                      <Users className="w-5 h-5" />
+                      <span>Manage Personas</span>
+                    </button>
+                    <button
+                      onClick={() => setShowUploadModal(true)}
+                      className="flex items-center space-x-2 bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors"
+                    >
+                      <Upload className="w-5 h-5" />
+                      <span>Upload Custom</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid md:grid-cols-3 gap-8">
-                  {personas.map((persona, index) => (
+                  {allPersonas.map((persona, index) => (
                     <div
                       key={persona.id}
                       className="group bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl p-8 hover:border-purple-500/50 transition-all duration-300 cursor-pointer hover:transform hover:scale-105 flex flex-col"
@@ -2375,18 +3242,14 @@ const TherapyAI: React.FC = () => {
             {/* Header */}
             <header className="px-6 py-6 border-b border-gray-800">
               <div className="max-w-7xl mx-auto flex items-center justify-between">
-                <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setCurrentStep(1)}
+                  className="flex items-center space-x-3 hover:opacity-80 transition-opacity"
+                >
                   <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
                     <Brain className="w-6 h-6 text-white" />
                   </div>
                   <span className="text-xl font-bold">TherapyAI</span>
-                </div>
-                <button
-                  onClick={() => setCurrentStep(2)}
-                  className="flex items-center text-gray-300 hover:text-white transition-colors"
-                >
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back
                 </button>
               </div>
             </header>
@@ -2764,8 +3627,8 @@ const TherapyAI: React.FC = () => {
                     )}
                     <button
                       onClick={() => {
-                        console.log("Test session end button clicked");
-                        // Test session ending
+                        console.log("End session button clicked");
+                        // End session
                         stopSpeech(); // Stop any ongoing speech
                         const summary = generateSessionSummary();
                         console.log("Generated summary:", summary);
@@ -2776,10 +3639,11 @@ const TherapyAI: React.FC = () => {
                         );
                         // Don't reset session immediately, let user see summary first
                       }}
-                      className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-all duration-300 hover:scale-110"
-                      title="Test session end"
+                      className="px-4 py-2 bg-red-500/20 backdrop-blur-sm border border-red-500/30 rounded-lg text-sm font-medium text-red-300 hover:bg-red-500/30 hover:text-red-200 transition-colors flex items-center"
+                      title="End Session"
                     >
-                      <Pause className="w-5 h-5" />
+                      <Pause className="w-4 h-4 mr-2" />
+                      End Session
                     </button>
                     <button
                       onClick={resetSession}
@@ -2972,44 +3836,44 @@ const TherapyAI: React.FC = () => {
                 </div>
 
                 {/* Real-time Feedback Panel */}
-                <div className="w-80 bg-white border-l border-gray-200 p-6 overflow-y-auto shadow-xl">
+                <div className="w-80 bg-gray-900/50 backdrop-blur-sm border-l border-gray-800 p-6 overflow-y-auto shadow-xl">
                   <div className="mb-6">
-                    <h3 className="text-lg font-bold text-gray-900 mb-2 flex items-center">
+                    <h3 className="text-lg font-bold text-white mb-2 flex items-center">
                       <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mr-3">
                         <span className="text-white text-xs font-bold">F</span>
                       </div>
                       Real-Time Feedback
                     </h3>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-xs text-gray-400">
                       Live coaching for your session
                     </div>
                   </div>
 
                   {/* Patient Metrics */}
-                  <div className="mb-6 bg-gray-50 rounded-lg p-4">
-                    <h4 className="text-sm font-semibold text-gray-800 mb-4 flex items-center">
-                      <Heart className="w-4 h-4 mr-2 text-red-500" />
+                  <div className="mb-6 bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-lg p-4">
+                    <h4 className="text-sm font-semibold text-white mb-4 flex items-center">
+                      <Heart className="w-4 h-4 mr-2 text-red-400" />
                       Patient Metrics
                     </h4>
 
                     {/* Emotional State */}
                     <div className="mb-4">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm text-gray-600">
+                        <span className="text-sm text-gray-300">
                           Emotional State
                         </span>
                         <div className="flex items-center">
                           <span
                             className={`text-sm font-medium ${
                               emotionalState === "anxious"
-                                ? "text-orange-600"
+                                ? "text-orange-400"
                                 : emotionalState === "depressed"
-                                ? "text-blue-600"
+                                ? "text-blue-400"
                                 : emotionalState === "angry"
-                                ? "text-red-600"
+                                ? "text-red-400"
                                 : emotionalState === "calm"
-                                ? "text-green-600"
-                                : "text-gray-600"
+                                ? "text-green-400"
+                                : "text-gray-400"
                             }`}
                           >
                             {emotionalState === "anxious"
@@ -3029,17 +3893,17 @@ const TherapyAI: React.FC = () => {
                     {/* Rapport Level */}
                     <div className="mb-4">
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm text-gray-600">
+                        <span className="text-sm text-gray-300">
                           Rapport Level
                         </span>
                         <div className="flex items-center">
                           <span
                             className={`text-sm font-bold ${
                               rapportLevel >= 7
-                                ? "text-green-600"
+                                ? "text-green-400"
                                 : rapportLevel >= 4
-                                ? "text-yellow-600"
-                                : "text-red-600"
+                                ? "text-yellow-400"
+                                : "text-red-400"
                             }`}
                           >
                             {rapportLevel.toFixed(1)}/10
@@ -3048,8 +3912,8 @@ const TherapyAI: React.FC = () => {
                             <span
                               className={`ml-2 text-xs font-bold animate-pulse ${
                                 rapportChange > 0
-                                  ? "text-green-500"
-                                  : "text-red-500"
+                                  ? "text-green-400"
+                                  : "text-red-400"
                               }`}
                             >
                               {rapportChange > 0 ? "+" : ""}
@@ -3058,7 +3922,7 @@ const TherapyAI: React.FC = () => {
                           )}
                         </div>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div className="w-full bg-gray-700 rounded-full h-2">
                         <div
                           className={`h-2 rounded-full transition-all duration-500 ${
                             rapportLevel >= 7
@@ -3070,7 +3934,7 @@ const TherapyAI: React.FC = () => {
                           style={{ width: `${(rapportLevel / 10) * 100}%` }}
                         ></div>
                       </div>
-                      <div className="mt-1 text-xs text-gray-500">
+                      <div className="mt-1 text-xs text-gray-400">
                         {rapportLevel >= 7
                           ? "Strong therapeutic alliance"
                           : rapportLevel >= 4
@@ -3082,14 +3946,14 @@ const TherapyAI: React.FC = () => {
                     {/* Engagement Level */}
                     <div>
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm text-gray-600">
+                        <span className="text-sm text-gray-300">
                           Engagement
                         </span>
-                        <span className="text-sm font-medium text-gray-700">
+                        <span className="text-sm font-medium text-white">
                           {engagementLevel}/5
                         </span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div className="w-full bg-gray-700 rounded-full h-2">
                         <div
                           className="bg-gradient-to-r from-blue-400 to-blue-500 h-2 rounded-full transition-all duration-500"
                           style={{ width: `${(engagementLevel / 5) * 100}%` }}
@@ -3100,14 +3964,14 @@ const TherapyAI: React.FC = () => {
 
                   {/* Session Phase */}
                   <div className="mb-6">
-                    <div className="bg-blue-50 rounded-lg p-3">
+                    <div className="bg-blue-900/30 border border-blue-700/50 rounded-lg p-3">
                       <div className="flex items-center mb-2">
-                        <Clock className="w-4 h-4 mr-2 text-blue-500" />
-                        <span className="text-sm font-semibold text-blue-800">
+                        <Clock className="w-4 h-4 mr-2 text-blue-400" />
+                        <span className="text-sm font-semibold text-blue-300">
                           Session Phase
                         </span>
                       </div>
-                      <div className="text-sm text-blue-700 capitalize">
+                      <div className="text-sm text-blue-200 capitalize">
                         {sessionPhase === "opening"
                           ? "Opening & Rapport Building"
                           : sessionPhase === "exploration"
@@ -3121,14 +3985,14 @@ const TherapyAI: React.FC = () => {
 
                   {/* Live Coaching Tips */}
                   <div>
-                    <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
-                      <Lightbulb className="w-4 h-4 mr-2 text-yellow-500" />
+                    <h4 className="text-sm font-semibold text-white mb-3 flex items-center">
+                      <Lightbulb className="w-4 h-4 mr-2 text-yellow-400" />
                       Live Coaching Tips
                     </h4>
                     <div className="space-y-3">
                       {currentFeedback.length === 0 ? (
-                        <div className="bg-gray-50 rounded-lg p-4 text-center">
-                          <div className="text-gray-500 text-sm">
+                        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 text-center">
+                          <div className="text-gray-400 text-sm">
                             Start the conversation to receive personalized
                             coaching tips
                           </div>
@@ -3139,26 +4003,26 @@ const TherapyAI: React.FC = () => {
                             key={feedback.id}
                             className={`rounded-lg p-3 ${
                               feedback.type === "positive"
-                                ? "bg-green-50 border-l-4 border-green-400"
+                                ? "bg-green-900/30 border-l-4 border-green-400"
                                 : feedback.type === "suggestion"
-                                ? "bg-yellow-50 border-l-4 border-yellow-400"
-                                : "bg-red-50 border-l-4 border-red-400"
+                                ? "bg-yellow-900/30 border-l-4 border-yellow-400"
+                                : "bg-red-900/30 border-l-4 border-red-400"
                             }`}
                           >
                             <div className="flex items-start">
                               {feedback.icon === "CheckCircle" && (
-                                <CheckCircle className="w-4 h-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
+                                <CheckCircle className="w-4 h-4 text-green-400 mr-2 mt-0.5 flex-shrink-0" />
                               )}
                               {feedback.icon === "MessageCircle" && (
-                                <MessageCircle className="w-4 h-4 text-purple-500 mr-2 mt-0.5 flex-shrink-0" />
+                                <MessageCircle className="w-4 h-4 text-purple-400 mr-2 mt-0.5 flex-shrink-0" />
                               )}
                               {feedback.icon === "Clock" && (
-                                <Clock className="w-4 h-4 text-blue-500 mr-2 mt-0.5 flex-shrink-0" />
+                                <Clock className="w-4 h-4 text-blue-400 mr-2 mt-0.5 flex-shrink-0" />
                               )}
                               {feedback.icon === "Lightbulb" && (
-                                <Lightbulb className="w-4 h-4 text-yellow-500 mr-2 mt-0.5 flex-shrink-0" />
+                                <Lightbulb className="w-4 h-4 text-yellow-400 mr-2 mt-0.5 flex-shrink-0" />
                               )}
-                              <span className="text-sm text-gray-700 leading-relaxed">
+                              <span className="text-sm text-gray-200 leading-relaxed">
                                 {feedback.message}
                               </span>
                             </div>
@@ -3167,11 +4031,115 @@ const TherapyAI: React.FC = () => {
                       )}
                     </div>
                   </div>
+
+                  {/* Sticky Notes Section */}
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-sm font-semibold text-white flex items-center">
+                        <MessageSquare className="w-4 h-4 mr-2 text-purple-400" />
+                        Session Notes
+                      </h4>
+                      <button
+                        onClick={() => setShowStickyNotes(!showStickyNotes)}
+                        className="text-xs text-purple-400 hover:text-purple-300 font-medium"
+                      >
+                        {showStickyNotes ? "Hide" : "Show"} Notes
+                      </button>
+                    </div>
+
+                    {showStickyNotes && (
+                      <div className="space-y-4">
+                        {/* Add New Note */}
+                        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+                          <div className="flex space-x-2">
+                            <input
+                              type="text"
+                              value={newNote}
+                              onChange={(e) => setNewNote(e.target.value)}
+                              onKeyPress={(e) =>
+                                e.key === "Enter" && addStickyNote()
+                              }
+                              placeholder="Add a note about this session..."
+                              className="flex-1 px-3 py-2 text-sm bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-white placeholder-gray-400"
+                            />
+                            <button
+                              onClick={addStickyNote}
+                              disabled={!newNote.trim()}
+                              className="px-3 py-2 bg-purple-500 text-white text-sm rounded-lg hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Display Notes */}
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {stickyNotes.length === 0 ? (
+                            <div className="text-center py-4 text-gray-400 text-sm">
+                              No notes yet. Add your first note above!
+                            </div>
+                          ) : (
+                            stickyNotes.map((note) => (
+                              <div
+                                key={note.id}
+                                className={`p-3 rounded-lg border-l-4 ${note.color} relative group`}
+                              >
+                                <div className="flex justify-between items-start">
+                                  <div className="flex-1">
+                                    <p className="text-sm text-gray-200 mb-1">
+                                      {note.content}
+                                    </p>
+                                    <div className="text-xs text-gray-400">
+                                      {formatSessionTime(note.sessionTime)}
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => deleteStickyNote(note.id)}
+                                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 transition-opacity"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         );
+
+      case 6:
+        // Student Dashboard
+        if (isSignedIn && currentUser?.type === "student") {
+          return (
+            <StudentDashboard
+              user={currentUser}
+              onStartSession={() => setCurrentStep(2)}
+              onManagePersonas={() => setShowPersonaManagement(true)}
+              onBackToHome={() => setCurrentStep(1)}
+            />
+          );
+        }
+        return null;
+
+      case 7:
+        // Practitioner Dashboard
+        if (isSignedIn && currentUser?.type === "practitioner") {
+          return (
+            <PractitionerDashboard
+              user={currentUser}
+              onStartSession={() => setCurrentStep(2)}
+              onManagePersonas={() => setShowPersonaManagement(true)}
+              onBackToHome={() => setCurrentStep(1)}
+            />
+          );
+        }
+        return null;
 
       default:
         return null;
@@ -3358,6 +4326,35 @@ const TherapyAI: React.FC = () => {
                 </div>
               </div>
 
+              {/* Session Notes */}
+              {sessionSummary.stickyNotes &&
+                sessionSummary.stickyNotes.length > 0 && (
+                  <div className="bg-gray-800/50 rounded-lg p-6 mt-6">
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center">
+                      <MessageSquare className="w-5 h-5 mr-3 text-purple-400" />
+                      Session Notes
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {sessionSummary.stickyNotes.map(
+                        (note: SessionNote, index: number) => (
+                          <div
+                            key={index}
+                            className="bg-gray-700/50 rounded-lg p-4 border-l-4 border-purple-500"
+                          >
+                            <p className="text-gray-200 text-sm mb-2">
+                              {note.content}
+                            </p>
+                            <div className="flex justify-between text-xs text-gray-400">
+                              <span>Session Time: {note.sessionTime}</span>
+                              <span>{note.timestamp}</span>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
+
               {/* Action Buttons */}
               <div className="mt-8 pt-6 border-t border-gray-800">
                 <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4">
@@ -3396,6 +4393,197 @@ const TherapyAI: React.FC = () => {
                     Return Home
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Persona Management Modal */}
+      {showPersonaManagement && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 rounded-2xl p-8 max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-white">
+                Persona Management
+              </h2>
+              <button
+                onClick={() => setShowPersonaManagement(false)}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <PersonaManagement
+              userId={userId}
+              onPersonaSelect={handlePersonaSelect}
+              selectedPersonaId={selectedPersona?.id}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Persona Upload Modal */}
+      <PersonaUploadModal
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onUpload={handlePersonaUpload}
+        userId={userId}
+      />
+
+      {/* Login Modal */}
+      {showLogin && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 rounded-2xl p-8 max-w-md w-full">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-white">
+                {userType === "student"
+                  ? "Student Login"
+                  : "Practitioner Login"}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowLogin(false);
+                  setUserType(null);
+                  resetLoginForm();
+                }}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {/* User Type Display */}
+              <div className="text-center">
+                <div
+                  className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-medium ${
+                    userType === "student"
+                      ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
+                      : "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                  }`}
+                >
+                  <User className="w-4 h-4 mr-2" />
+                  {userType === "student"
+                    ? "Student Account"
+                    : "Practitioner Account"}
+                </div>
+              </div>
+
+              {/* Login Form */}
+              <form
+                className="space-y-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleLogin();
+                }}
+              >
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={loginForm.email}
+                    onChange={(e) =>
+                      handleLoginFormChange("email", e.target.value)
+                    }
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="Enter your email"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={loginForm.password}
+                    onChange={(e) =>
+                      handleLoginFormChange("password", e.target.value)
+                    }
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="Enter your password"
+                    required
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={loginForm.rememberMe}
+                      onChange={(e) =>
+                        handleLoginFormChange("rememberMe", e.target.checked)
+                      }
+                      className="w-4 h-4 text-purple-600 bg-gray-800 border-gray-700 rounded focus:ring-purple-500 focus:ring-2"
+                    />
+                    <span className="ml-2 text-sm text-gray-300">
+                      Remember me
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className="text-sm text-purple-400 hover:text-purple-300 transition-colors"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+
+                {/* Error Message */}
+                {loginError && (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                    <p className="text-red-400 text-sm">{loginError}</p>
+                  </div>
+                )}
+              </form>
+
+              {/* Action Buttons */}
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={handleLogin}
+                  disabled={isLoggingIn || isCreatingAccount}
+                  className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none ${
+                    userType === "student"
+                      ? "bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
+                      : "bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600"
+                  }`}
+                >
+                  {isLoggingIn ? (
+                    <div className="flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Signing In...
+                    </div>
+                  ) : (
+                    "Sign In"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateAccount}
+                  disabled={isLoggingIn || isCreatingAccount}
+                  className="w-full py-3 px-4 bg-gray-800 border border-gray-700 rounded-lg font-semibold text-white hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isCreatingAccount ? (
+                    <div className="flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Creating Account...
+                    </div>
+                  ) : (
+                    "Create Account"
+                  )}
+                </button>
+              </div>
+
+              {/* User Type Specific Info */}
+              <div className="text-center">
+                <p className="text-xs text-gray-500">
+                  {userType === "student"
+                    ? "Students can practice therapy skills with AI personas"
+                    : "Practitioners can access advanced training and assessment tools"}
+                </p>
               </div>
             </div>
           </div>
